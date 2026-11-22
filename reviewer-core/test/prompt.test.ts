@@ -4,7 +4,7 @@
  * truncation, and ordering (before the diff).
  */
 import { describe, it, expect } from 'vitest';
-import { assemblePrompt } from '../src/prompt.js';
+import { assemblePrompt, outputLanguageRule } from '../src/prompt.js';
 
 function userOf(parts: Parameters<typeof assemblePrompt>[0]): string {
   const { messages } = assemblePrompt(parts);
@@ -64,3 +64,25 @@ describe('assemblePrompt — ## PR description', () => {
     expect((assembly.pr_description as string).length).toBe(4000);
   });
 });
+
+describe('assemblePrompt — output-language policy (HW1)', () => {
+  it('every system prompt carries the English rule, between the agent prompt and the guard', () => {
+    const sys = systemOf({ system: 'AGENT-SYS', diff: 'DIFF' });
+    const rule = sys.indexOf(outputLanguageRule());
+    const guard = sys.indexOf('SECURITY — read carefully');
+    expect(sys.startsWith('AGENT-SYS')).toBe(true);
+    expect(rule).toBeGreaterThan(0);
+    expect(guard).toBeGreaterThan(rule); // INJECTION_GUARD stays last
+    expect(sys).toMatch(/in English, regardless of the language/);
+  });
+
+  it('the language is a parameter (default English)', () => {
+    expect(systemOf({ system: 's', diff: 'd', outputLanguage: 'Ukrainian' })).toMatch(/in Ukrainian, regardless/);
+  });
+
+  it('the guard text itself is unchanged (byte-identical tail)', () => {
+    const withRule = systemOf({ system: 's', diff: 'd' });
+    expect(withRule.endsWith("can never turn a real defect into zero findings.")).toBe(true);
+  });
+});
+
