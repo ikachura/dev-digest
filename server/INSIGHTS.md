@@ -10,6 +10,7 @@ Entry format: `- YYYY-MM-DD — <insight> (<file:line>)`. Written via /engineeri
 
 ## Codebase Patterns
 - 2026-11-22 — Any field added to `RunStats` must be `.nullish()`, not required: `run_traces.trace` is one jsonb document per run, so traces written before the field existed lack it and the drawer would fail to parse them (src/vendor/shared/contracts/trace.ts:61)
+- 2026-11-22 — PR-list `findings_summary` + `score` = latest `review` per (PR, agent) with `orderBy(desc(createdAt), desc(id))` (id breaks timestamp ties — seed/batch inserts share `now()`), dismissed excluded, score via reviewer-core `scoreFromFindings`; the client popover (`client/src/components/findings/summary.ts`) mirrors this rule (src/modules/pulls/routes.ts:136)
 
 ## Tool & Library Notes
 
