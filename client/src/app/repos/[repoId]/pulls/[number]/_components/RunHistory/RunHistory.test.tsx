@@ -5,10 +5,11 @@
  * and shows the review score ring.
  */
 import { describe, it, expect, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import type { RunSummary } from "@devdigest/shared";
+import type { FindingRecord, ReviewRecord, RunSummary, Severity } from "@devdigest/shared";
 import messages from "../../../../../../../../messages/en/prReview.json";
+import findingsMessages from "../../../../../../../../messages/en/findings.json";
 import { RunHistory } from "./RunHistory";
 
 afterEach(cleanup);
@@ -36,12 +37,51 @@ function run(o: Partial<RunSummary>): RunSummary {
   };
 }
 
-function renderRuns(runs: RunSummary[]) {
+function renderRuns(runs: RunSummary[], reviews: ReviewRecord[] = []) {
   return render(
-    <NextIntlClientProvider locale="en" messages={{ prReview: messages }}>
-      <RunHistory runs={runs} onOpenTrace={() => {}} />
+    <NextIntlClientProvider locale="en" messages={{ prReview: messages, findings: findingsMessages }}>
+      <RunHistory runs={runs} reviews={reviews} onOpenTrace={() => {}} />
     </NextIntlClientProvider>,
   );
+}
+
+function finding(id: string, severity: Severity, title: string, dismissed = false): FindingRecord {
+  return {
+    id,
+    severity,
+    category: "security",
+    title,
+    file: "src/config.ts",
+    start_line: 12,
+    end_line: 12,
+    rationale: "why",
+    suggestion: null,
+    confidence: 0.9,
+    kind: "finding",
+    trifecta_components: null,
+    evidence: null,
+    review_id: "rv1",
+    accepted_at: null,
+    dismissed_at: dismissed ? "2026-11-22T00:00:00Z" : null,
+  };
+}
+
+function reviewFor(runId: string, findings: FindingRecord[]): ReviewRecord {
+  return {
+    id: `rv-${runId}`,
+    pr_id: "pr1",
+    agent_id: "a1",
+    run_id: runId,
+    agent_name: "Security Reviewer",
+    kind: "review",
+    verdict: "request_changes",
+    summary: null,
+    score: 30,
+    model: null,
+    grounding: null,
+    created_at: "2026-06-11T18:44:34.000Z",
+    findings,
+  };
 }
 
 describe("RunHistory — outcome badge", () => {
@@ -96,5 +136,54 @@ describe("RunHistory — cost badge (M1)", () => {
   it("a failed run shows no cost line", () => {
     renderRuns([run({ status: "failed", error: "429 quota", cost_usd: null })]);
     expect(screen.queryByText(/tok ·/)).not.toBeInTheDocument();
+  });
+});
+
+describe("RunHistory — severity icons + popover (HW1)", () => {
+  const FINDINGS = [
+    finding("c1", "CRITICAL", "Hardcoded secret"),
+    finding("c2", "CRITICAL", "SSRF forwarder"),
+    finding("w1", "WARNING", "Missing rate limit"),
+    finding("w2", "WARNING", "Dismissed warning", true),
+  ];
+
+  it("a settled run shows icon+count per level from its review's open findings", () => {
+    renderRuns([run({ run_id: "run-1", findings_count: 4, blockers: 2 })], [reviewFor("run-1", FINDINGS)]);
+    const icons = screen.getByRole("button", { name: /2 critical, 1 warning, 0 suggestion/ });
+    expect(icons.querySelector('[data-severity="CRITICAL"]')).toHaveTextContent("2");
+    expect(icons.querySelector('[data-severity="WARNING"]')).toHaveTextContent("1"); // dismissed excluded
+    expect(icons.querySelector('[data-severity="SUGGESTION"]')).toBeNull();
+    // No "· N blockers" text next to the icons: the red CRITICAL icon already says it.
+    expect(screen.queryByText(/blocker/)).not.toBeInTheDocument();
+  });
+
+  it("hovering the icons lists that run's open findings (no fetch: data comes from props)", () => {
+    renderRuns([run({ run_id: "run-1", findings_count: 4, blockers: 2 })], [reviewFor("run-1", FINDINGS)]);
+    fireEvent.mouseEnter(screen.getByRole("button", { name: /critical/ }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("3 findings in this run")).toBeInTheDocument();
+    expect(within(dialog).getByText("Hardcoded secret")).toBeInTheDocument();
+    expect(within(dialog).queryByText("Dismissed warning")).not.toBeInTheDocument();
+  });
+
+  it("a run without a matching review keeps the plain 'N finding(s)' text", () => {
+    renderRuns([run({ run_id: "run-2", findings_count: 3 })], [reviewFor("run-1", FINDINGS)]);
+    expect(screen.queryByRole("button", { name: /critical/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/3 finding/)).toBeInTheDocument();
+  });
+
+  it("all findings dismissed → '0 findings' and no stale blockers from the stored run", () => {
+    const allDismissed = [finding("c1", "CRITICAL", "A", true), finding("w1", "WARNING", "B", true)];
+    renderRuns([run({ run_id: "run-1", findings_count: 2, blockers: 1 })], [reviewFor("run-1", allDismissed)]);
+    expect(screen.getByText("0 finding(s)")).toBeInTheDocument();
+    expect(screen.queryByText(/blocker/)).not.toBeInTheDocument();
+  });
+
+  it("the CRITICAL icon shows the live open count, not the blockers snapshot stored at completion", () => {
+    const oneOpenCritical = [finding("c1", "CRITICAL", "A"), finding("c2", "CRITICAL", "B", true)];
+    renderRuns([run({ run_id: "run-1", findings_count: 2, blockers: 2 })], [reviewFor("run-1", oneOpenCritical)]);
+    const icons = screen.getByRole("button", { name: /critical/ });
+    expect(icons.querySelector('[data-severity="CRITICAL"]')).toHaveTextContent("1");
+    expect(screen.queryByText(/blocker/)).not.toBeInTheDocument();
   });
 });

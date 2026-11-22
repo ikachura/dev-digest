@@ -9,10 +9,30 @@ import type { PrMeta } from "@/lib/types";
 import { SIZE_COLOR, STATUS_META } from "../../constants";
 import { relativeTime, sizeOf } from "../../helpers";
 import { formatUsd } from "@/lib/format";
+import { usePrReviews } from "@/lib/hooks/reviews";
+import { FindingsPopover, SeverityIcons, prFindings, totalCount } from "@/components/findings";
 import { s } from "../../styles";
 
-export function PRRow({ pr, repoId }: { pr: PrMeta; repoId: string }) {
+export function PRRow({
+  pr,
+  repoId,
+  repoFullName,
+}: {
+  pr: PrMeta;
+  repoId: string;
+  /** owner/repo — for GitHub deep-links in the findings popover. */
+  repoFullName?: string | null;
+}) {
   const t = useTranslations("prReview");
+  const tf = useTranslations("findings");
+  // Popover details are fetched lazily, only once the user opens it (cached per PR).
+  const [findingsOpen, setFindingsOpen] = React.useState(false);
+  const reviewsQuery = usePrReviews(findingsOpen && pr.id ? pr.id : null);
+  const popoverFindings = React.useMemo(
+    () => (reviewsQuery.data ? prFindings(reviewsQuery.data) : undefined),
+    [reviewsQuery.data],
+  );
+  const summary = pr.findings_summary;
   const router = useRouter();
   const [h, setH] = React.useState(false);
   const st = STATUS_META[pr.status] ?? STATUS_META.needs_review!;
@@ -50,6 +70,26 @@ export function PRRow({ pr, repoId }: { pr: PrMeta; repoId: string }) {
       <div style={s.scoreCell}>
         {reviewed ? (
           <CircularScore score={pr.score!} size={34} stroke={3} />
+        ) : (
+          <span style={s.muted}>—</span>
+        )}
+      </div>
+      <div style={s.findingsCell}>
+        {summary && totalCount(summary) > 0 ? (
+          <FindingsPopover
+            variant="pr"
+            findings={popoverFindings}
+            repoFullName={repoFullName}
+            headSha={pr.head_sha}
+            onOpenChange={setFindingsOpen}
+            ariaLabel={tf("icons.aria", {
+              critical: summary.CRITICAL,
+              warning: summary.WARNING,
+              suggestion: summary.SUGGESTION,
+            })}
+          >
+            <SeverityIcons counts={summary} />
+          </FindingsPopover>
         ) : (
           <span style={s.muted}>—</span>
         )}

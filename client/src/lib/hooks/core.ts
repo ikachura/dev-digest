@@ -4,7 +4,7 @@
    and are re-exported alongside these from hooks/index.ts. */
 "use client";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import type {
   Settings,
@@ -99,6 +99,18 @@ export function useDeleteRepo() {
 }
 
 // ---- Pull requests (F1: GET /repos/:id/pulls, GET /pulls/:id) ----
+
+/**
+ * Refresh every cached PR list NOW, including lists that aren't on screen.
+ * The list's Cost / Findings / Score are derived from runs + reviews, so after a run
+ * finishes or a finding is accepted/dismissed the cached list is wrong. A plain
+ * `invalidateQueries` only marks INACTIVE queries stale — the next visit then shows
+ * the old numbers first and swaps them a second later (visible flicker).
+ * `refetchType: "all"` refetches in the background immediately instead.
+ */
+export function refreshPullsLists(qc: QueryClient): Promise<void> {
+  return qc.invalidateQueries({ queryKey: ["pulls"], refetchType: "all" });
+}
 export function usePulls(repoId: string | null | undefined) {
   return useQuery({
     queryKey: ["pulls", repoId],

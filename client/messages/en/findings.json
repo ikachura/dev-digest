@@ -1,0 +1,12 @@
+{
+  "popover": {
+    "titleRun": "{count, plural, one {# finding in this run} other {# findings in this run}}",
+    "titlePr": "{count, plural, one {# finding} other {# findings}}",
+    "loading": "Loading findings…",
+    "empty": "No open findings",
+    "confidence": "{pct}% conf"
+  },
+  "icons": {
+    "aria": "{critical} critical, {warning} warning, {suggestion} suggestion — show findings"
+  }
+}

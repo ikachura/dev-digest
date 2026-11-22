@@ -4,7 +4,8 @@ import React from "react";
 import { useTranslations } from "next-intl";
 import { formatUsd } from "@/lib/format";
 import { Badge, Icon, CircularScore, type IconName } from "@devdigest/ui";
-import type { RunSummary, PrCommit } from "@devdigest/shared";
+import type { RunSummary, PrCommit, ReviewRecord, FindingRecord } from "@devdigest/shared";
+import { activeFindings, countBySeverity, FindingsPopover, SeverityIcons, totalCount } from "@/components/findings";
 
 /**
  * PR timeline — every agent run interleaved with the PR's commits, newest-first
@@ -91,9 +92,17 @@ export function RunHistory({
   onOpenTrace,
   onGoToReview,
   onDelete,
+  reviews = [],
+  repoFullName,
+  headSha,
 }: {
   runs: RunSummary[];
   commits?: PrCommit[];
+  /** The PR's reviews (already loaded by the page) — source of per-run severity icons. */
+  reviews?: ReviewRecord[];
+  /** For GitHub deep-links on finding locations inside the popover. */
+  repoFullName?: string | null;
+  headSha?: string | null;
   /** Open the trace + log drawer for a run (the logs icon). */
   onOpenTrace: (runId: string) => void;
   /** Jump to this run's inline review accordion below (clicking the agent name). */
@@ -101,6 +110,13 @@ export function RunHistory({
   onDelete?: (runId: string) => void;
 }) {
   const t = useTranslations("prReview");
+  const tf = useTranslations("findings");
+  // Open (non-dismissed) findings per run, from data the page already has — no request.
+  const findingsByRun = React.useMemo(() => {
+    const m = new Map<string, FindingRecord[]>();
+    for (const rv of reviews) if (rv.run_id) m.set(rv.run_id, activeFindings(rv.findings));
+    return m;
+  }, [reviews]);
   if (runs.length === 0 && commits.length === 0) return null;
 
   const items: TimelineItem[] = [
@@ -189,12 +205,42 @@ export function RunHistory({
                   {r.error}
                 </div>
               )}
-              {settled && (
-                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                  {t("runStatus.findings", { count: r.findings_count ?? 0 })}
-                  {(r.blockers ?? 0) > 0 ? t("runStatus.blockers", { count: r.blockers ?? 0 }) : ""}
-                </div>
-              )}
+              {settled && (() => {
+                const runFindings = findingsByRun.get(r.run_id);
+                const counts = runFindings ? countBySeverity(runFindings) : null;
+                return (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-muted)" }}>
+                    {counts ? (
+                      totalCount(counts) > 0 ? (
+                      <FindingsPopover
+                        variant="run"
+                        findings={runFindings}
+                        repoFullName={repoFullName}
+                        headSha={headSha}
+                        ariaLabel={tf("icons.aria", {
+                          critical: counts.CRITICAL,
+                          warning: counts.WARNING,
+                          suggestion: counts.SUGGESTION,
+                        })}
+                      >
+                        <SeverityIcons counts={counts} />
+                      </FindingsPopover>
+                      ) : (
+                        // Review loaded but every finding was dismissed (or none found).
+                        t("runStatus.findings", { count: 0 })
+                      )
+                    ) : (
+                      // No review loaded for this run: no icons to show, so fall back to the
+                      // stored run totals (here "· N blockers" is the only critical signal).
+                      <>
+                        {t("runStatus.findings", { count: r.findings_count ?? 0 })}
+                        {(r.blockers ?? 0) > 0 ? t("runStatus.blockers", { count: r.blockers ?? 0 }) : ""}
+                      </>
+                    )}
+                    {/* With icons, no "· N blockers" text: the red CRITICAL icon already shows it. */}
+                  </div>
+                );
+              })()}
             </div>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>
               {r.ran_at && <span>{new Date(r.ran_at).toLocaleTimeString()}</span>}

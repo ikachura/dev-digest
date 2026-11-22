@@ -176,6 +176,11 @@ export const PrMeta = z.object({
   cost_usd: z.number().nullish(),
   // True when any priced run in cost_usd is an estimate → show the total as approximate.
   cost_estimated: z.boolean().nullish(),
+  // HW1 (list endpoint only): open findings per severity across the latest review of
+  // each agent; null/absent until reviewed. `score` is derived from the same set.
+  findings_summary: z
+    .object({ CRITICAL: z.number().int(), WARNING: z.number().int(), SUGGESTION: z.number().int() })
+    .nullish(),
 });
 export type PrMeta = z.infer<typeof PrMeta>;
 

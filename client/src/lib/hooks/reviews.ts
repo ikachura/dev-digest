@@ -4,6 +4,7 @@
 
 import React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { refreshPullsLists } from "./core";
 import { api, API_BASE } from "../api";
 import { notify } from "../toast";
 import type {
@@ -66,6 +67,8 @@ export function useDeleteRun(prId: string | null | undefined) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["pr-runs", prId] });
       qc.invalidateQueries({ queryKey: ["reviews", prId] });
+      // PR-list Cost / Findings / Score are derived from runs + reviews (HW1).
+      void refreshPullsLists(qc);
     },
   });
 }
@@ -156,6 +159,8 @@ export function useFindingAction() {
       ),
     onSuccess: (_d, { prId }) => {
       if (prId) qc.invalidateQueries({ queryKey: ["reviews", prId] });
+      // Dismissing changes the PR list's Findings column and Score (HW1).
+      void refreshPullsLists(qc);
     },
   });
 }

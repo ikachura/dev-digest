@@ -1,15 +1,16 @@
-/* FindingsPanel — hide-low-confidence + j/k navigation + FindingCard list,
-   wiring the accept/dismiss action hook (A2). */
+/* FindingsPanel — severity counters/filter (HW1) + hide-low-confidence + j/k
+   navigation + FindingCard list, wiring the accept/dismiss action hook (A2). */
 "use client";
 
 import React from "react";
 import { useTranslations } from "next-intl";
 import { Toggle, EmptyState } from "@devdigest/ui";
-import type { FindingRecord } from "@devdigest/shared";
+import type { FindingRecord, Severity } from "@devdigest/shared";
 import { FindingCard } from "../FindingCard";
 import { useFindingAction } from "../../../../../../../lib/hooks/reviews";
+import { SeverityCounters } from "./_components/SeverityCounters";
 import { KEY_TO_ACTION } from "./constants";
-import { visibleFindings } from "./helpers";
+import { countBySeverity, passesConfidence, visibleFindings } from "./helpers";
 import { s } from "./styles";
 
 export function FindingsPanel({
@@ -26,16 +27,37 @@ export function FindingsPanel({
   const t = useTranslations("prReview");
   const action = useFindingAction();
   const [hideLow, setHideLow] = React.useState(false);
+  const [severity, setSeverity] = React.useState<Severity | null>(null);
   const [focusIdx, setFocusIdx] = React.useState(0);
 
-  const shown = React.useMemo(() => visibleFindings(findings, hideLow), [findings, hideLow]);
+  // Counters follow Hide low confidence, so each number equals what clicking it shows.
+  // Everything is derived from the `findings` prop: accept/dismiss refetches it and
+  // the counts recompute; toggling a level never hits the network.
+  const counts = React.useMemo(
+    () => countBySeverity(passesConfidence(findings, hideLow)),
+    [findings, hideLow],
+  );
+  const shown = React.useMemo(
+    () => visibleFindings(findings, hideLow, severity),
+    [findings, hideLow, severity],
+  );
+
+  const toggleSeverity = React.useCallback((level: Severity) => {
+    setSeverity((cur) => (cur === level ? null : level));
+    setFocusIdx(0);
+  }, []);
+  const toggleHideLow = React.useCallback((on: boolean) => {
+    setHideLow(on);
+    setFocusIdx(0);
+  }, []);
 
   // j/k navigation + a/d shortcuts on the focused finding (keyboard).
   React.useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
-      if (e.key === "j") setFocusIdx((i) => Math.min(i + 1, shown.length - 1));
+      // Clamp at 0: a severity filter can leave the list empty (length - 1 = -1).
+      if (e.key === "j") setFocusIdx((i) => Math.max(0, Math.min(i + 1, shown.length - 1)));
       else if (e.key === "k") setFocusIdx((i) => Math.max(i - 1, 0));
       else if (KEY_TO_ACTION[e.key] && shown[focusIdx]) {
         action.mutate({ findingId: shown[focusIdx]!.id, action: KEY_TO_ACTION[e.key]!, prId });
@@ -48,9 +70,11 @@ export function FindingsPanel({
   return (
     <div>
       <div style={s.toolbar}>
+        <SeverityCounters counts={counts} active={severity} onToggle={toggleSeverity} />
+        {(severity !== null || Object.values(counts).some((n) => n > 0)) && <div style={s.divider} aria-hidden />}
         <div style={s.toggleGroup}>
           {t("panel.hideLowConfidence")}
-          <Toggle on={hideLow} onChange={setHideLow} size={16} />
+          <Toggle on={hideLow} onChange={toggleHideLow} size={16} />
         </div>
       </div>
 
@@ -60,7 +84,10 @@ export function FindingsPanel({
         ) : (
           shown.map((f, i) => (
             <FindingCard
-              key={f.id}
+              // The filter is part of the key: FindingCard reads `defaultExpanded`
+              // only on mount, so the first card of a newly filtered list must remount
+              // to auto-expand (otherwise a card that was collapsed stays collapsed).
+              key={`${severity ?? "all"}:${f.id}`}
               f={f}
               focused={i === focusIdx}
               defaultExpanded={i === 0}

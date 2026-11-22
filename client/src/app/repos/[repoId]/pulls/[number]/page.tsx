@@ -17,6 +17,7 @@ import { DiffTab } from "./_components/DiffTab";
 import RunTraceDrawer from "./_components/RunTraceDrawer";
 import { usePullDetail, usePulls } from "../../../../../lib/hooks";
 import { useQueryClient } from "@tanstack/react-query";
+import { refreshPullsLists } from "@/lib/hooks/core";
 import { usePrReviews, useCancelRun, usePrActiveRuns, usePrRuns, useDeleteRun } from "../../../../../lib/hooks/reviews";
 import { useActiveRepo, useRepoNotFound } from "../../../../../lib/repo-context";
 import { ApiError } from "../../../../../lib/api";
@@ -157,6 +158,9 @@ export default function PRDetailPage() {
               invalidateActiveRuns();
               invalidateRunHistory();
               refetchReviews();
+              // The PR list's Cost / Findings / Score just changed — refresh the cached
+              // list now so going back to it doesn't flash the previous numbers.
+              void refreshPullsLists(qc);
             }}
           />
         )}

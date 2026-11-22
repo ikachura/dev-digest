@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { PrMeta, PrDetail, GitHubClient, PrReviewComment } from '@devdigest/shared';
 import { PrCommentInput } from '@devdigest/shared';
 import * as t from '../../db/schema.js';
@@ -8,6 +8,7 @@ import { getContext } from '../_shared/context.js';
 import { IdParams } from '../_shared/schemas.js';
 import { AppError, NotFoundError } from '../../platform/errors.js';
 import { deriveReviewStatus } from './status.js';
+import { scoreFromFindings } from '@devdigest/reviewer-core';
 
 /**
  * F1 — pulls module. PR import via Octokit (list + per-PR detail).
@@ -111,21 +112,57 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
       }
     }
 
-    // Latest-review SCORE per PR for the list's score ring. Computed on read
-    // from reviews (no FK denorm); the list is small, so one IN-query + JS
-    // grouping is cheap. (The per-severity FINDINGS breakdown is intentionally
-    // not surfaced on the list — findings live on the PR detail page.)
+    // Findings + Score per PR for the list (HW1). The "current picture" of a PR is
+    // the LATEST review of EACH agent (a re-run replaces that agent's findings rather
+    // than adding to them), minus DISMISSED findings. Score is recomputed from exactly
+    // that set with the engine's formula, so the score ring and the severity icons
+    // next to it can never disagree. Computed on read (list is small): one query for
+    // reviews, one for their findings, JS grouping.
     const prIds = rows.map((r) => r.id);
-    const latestReviewByPr = new Map<string, { score: number | null }>();
+    type Summary = { CRITICAL: number; WARNING: number; SUGGESTION: number };
+    const summaryByPr = new Map<string, { summary: Summary; score: number }>();
     if (prIds.length > 0) {
       const reviewRows = await container.db
-        .select({ prId: t.reviews.prId, score: t.reviews.score })
+        .select({ id: t.reviews.id, prId: t.reviews.prId, agentId: t.reviews.agentId })
         .from(t.reviews)
-        .where(and(inArray(t.reviews.prId, prIds), eq(t.reviews.kind, 'review')))
-        .orderBy(desc(t.reviews.createdAt));
-      // Rows are newest-first → first seen per PR is the latest review.
+        .where(
+          and(
+            eq(t.reviews.workspaceId, workspaceId),
+            inArray(t.reviews.prId, prIds),
+            eq(t.reviews.kind, 'review'),
+          ),
+        )
+        // id breaks ties on equal timestamps — the client (summary.ts) uses the same rule.
+        .orderBy(desc(t.reviews.createdAt), desc(t.reviews.id));
+      // Newest-first → the first review seen per (PR, agent) is that agent's latest.
+      const seen = new Set<string>();
+      const latestReviewPr = new Map<string, string>(); // reviewId → prId
       for (const rv of reviewRows) {
-        if (!latestReviewByPr.has(rv.prId)) latestReviewByPr.set(rv.prId, { score: rv.score });
+        const key = `${rv.prId}:${rv.agentId ?? `review:${rv.id}`}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        latestReviewPr.set(rv.id, rv.prId);
+      }
+      const findingsByPr = new Map<string, { severity: string }[]>();
+      for (const prId of new Set(latestReviewPr.values())) findingsByPr.set(prId, []);
+      const reviewIds = [...latestReviewPr.keys()];
+      if (reviewIds.length > 0) {
+        const findingRows = await container.db
+          .select({ reviewId: t.findings.reviewId, severity: t.findings.severity })
+          .from(t.findings)
+          .where(and(inArray(t.findings.reviewId, reviewIds), isNull(t.findings.dismissedAt)));
+        for (const f of findingRows) {
+          const prId = latestReviewPr.get(f.reviewId);
+          if (prId) findingsByPr.get(prId)?.push(f);
+        }
+      }
+      for (const [prId, list] of findingsByPr) {
+        const summary: Summary = { CRITICAL: 0, WARNING: 0, SUGGESTION: 0 };
+        for (const f of list) if (f.severity in summary) summary[f.severity as keyof Summary] += 1;
+        summaryByPr.set(prId, {
+          summary,
+          score: scoreFromFindings(list as { severity: keyof Summary }[]),
+        });
       }
     }
 
@@ -153,7 +190,7 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
 
     const now = Date.now();
     return rows.map((r) => {
-      const review = latestReviewByPr.get(r.id);
+      const review = summaryByPr.get(r.id);
       return {
         id: r.id,
         number: r.number,
@@ -174,7 +211,9 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
         }),
         opened_at: r.openedAt?.toISOString() ?? null,
         updated_at: r.updatedAt?.toISOString() ?? null,
+        // null = never reviewed (list shows "—"); otherwise derived from findings.
         score: review ? review.score : null,
+        findings_summary: review ? review.summary : null,
         cost_usd: costByPr.get(r.id)?.total ?? null,
         cost_estimated: costByPr.get(r.id)?.estimated ?? false,
       };
