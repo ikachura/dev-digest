@@ -15,6 +15,8 @@
 export {
   assemblePrompt,
   wrapUntrusted,
+  outputLanguageRule,
+  DEFAULT_OUTPUT_LANGUAGE,
   type PromptParts,
   type AssembledPrompt,
 } from './prompt.js';
@@ -32,7 +34,7 @@ export {
 } from './llm/structured.js';
 
 // Map-reduce helpers (reduce partials, slice a file's diff).
-export { reduceReviews, sliceDiff } from './review/reduce.js';
+export { reduceReviews, sliceDiff, scoreFromFindings } from './review/reduce.js';
 
 // The engine entry point: given (diff + resolved agent inputs + LLM) → grounded Review.
 export {
@@ -57,3 +59,4 @@ export {
 // The single OpenAI-compatible structured provider (OpenRouter), shared by the
 // CI runner and the server's openrouter path. Owns session grouping + guards.
 export { OpenRouterProvider, type OpenRouterProviderOptions } from './llm/openrouter.js';
+export { isOffLanguage, translateReviewProse } from './review/language.js';

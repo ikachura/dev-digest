@@ -10,6 +10,7 @@ import { Review as ReviewSchema } from '@devdigest/shared';
 import { assemblePrompt } from '../prompt.js';
 import { groundFindings, groundingSummary } from '../grounding.js';
 import { reduceReviews, scoreFromFindings, sliceDiff } from './reduce.js';
+import { isOffLanguage, translateReviewProse } from './language.js';
 
 /**
  * reviewPullRequest — the review engine entry point.
@@ -90,6 +91,8 @@ export interface ReviewInput {
    * type, e.g. the server's RunCancelledError); the engine stays agnostic.
    */
   checkCancelled?: () => void;
+  /** Language for all human-readable output (rule in the prompt + check). Default: English. */
+  outputLanguage?: string;
 }
 
 export interface ReviewOutcome {
@@ -138,6 +141,7 @@ export async function reviewPullRequest(input: ReviewInput): Promise<ReviewOutco
     repoMap: input.repoMap,
     prDescription: input.prDescription,
     task: input.task,
+    outputLanguage: input.outputLanguage,
   };
 
   // Whole-diff assembly is the trace default; overwritten below for single-pass.
@@ -187,8 +191,35 @@ export async function reviewPullRequest(input: ReviewInput): Promise<ReviewOutco
     costUsd = costUsd == null || res.costUsd == null ? null : costUsd + res.costUsd;
     if (res.costEstimated) costEstimated = true;
     raws.push(res.raw);
-    partials.push(res.data);
-    emit('result', `${chunk.label}: ${res.data.findings.length} candidate finding(s)`);
+
+    // Output-language check: the prompt asks for English, this VERIFIES it. On drift,
+    // one small prose-only translation call; structure always stays from `res.data`.
+    let data = res.data;
+    if (isOffLanguage(data, input.outputLanguage)) {
+      emit('info', `${chunk.label}: output not in ${input.outputLanguage ?? 'English'} — translating prose`);
+      try {
+        const fix = await translateReviewProse(data, {
+          llm: input.llm,
+          model: input.model,
+          ...(input.outputLanguage ? { language: input.outputLanguage } : {}),
+          ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+        });
+        tokensIn += fix.tokensIn;
+        tokensOut += fix.tokensOut;
+        costUsd = costUsd == null || fix.costUsd == null ? null : costUsd + fix.costUsd;
+        if (fix.costEstimated) costEstimated = true;
+        if (isOffLanguage(fix.review, input.outputLanguage)) {
+          emit('info', `${chunk.label}: translation still not in the target language — kept original`);
+        } else {
+          data = fix.review;
+        }
+      } catch (err) {
+        // Never lose a review over language: keep the original, log why.
+        emit('info', `${chunk.label}: language repair failed (${(err as Error).message}) — kept original`);
+      }
+    }
+    partials.push(data);
+    emit('result', `${chunk.label}: ${data.findings.length} candidate finding(s)`);
   }
 
   const merged = reduceReviews(partials);

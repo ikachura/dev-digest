@@ -1,5 +1,8 @@
 import type { FindingActionKind } from "@devdigest/shared";
 
+// Shared with the PR list / Timeline (components/findings); re-exported for this panel.
+export { SEVERITY_LEVELS } from "@/components/findings/summary";
+
 /** Sort weight per severity (lower = shown first). */
 export const SEVERITY_ORDER: Record<string, number> = {
   CRITICAL: 0,

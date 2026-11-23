@@ -14,14 +14,14 @@ export function VerdictBanner({
   summary,
   score,
   findingsCount,
-  blockers,
   agentName,
 }: {
   verdict: Verdict;
   summary: string | null;
   score: number | null;
   findingsCount: number;
-  blockers: number;
+  /** Kept for callers; no longer rendered (HW1: the red CRITICAL count shows it). */
+  blockers?: number;
   agentName?: string | null;
 }) {
   const t = useTranslations("prReview");
@@ -37,7 +37,6 @@ export function VerdictBanner({
           <span style={s.label(m.c)}>{t(`verdict.${m.labelKey}`)}</span>
           <Badge color="var(--text-secondary)">
             {t("verdict.findingsCount", { count: findingsCount })}
-            {blockers > 0 ? t("verdict.blockers", { count: blockers }) : ""}
           </Badge>
           {agentName && (
             <Badge color="var(--accent-text)" bg="var(--accent-bg)" icon="Cpu">

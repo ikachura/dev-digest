@@ -15,7 +15,7 @@ function renderWithIntl(ui: React.ReactElement) {
 }
 
 describe("VerdictBanner (smoke)", () => {
-  it("shows verdict label + score + finding/blocker counts", () => {
+  it("shows verdict label + score + finding count (no duplicated blockers text)", () => {
     renderWithIntl(
       <VerdictBanner
         verdict="request_changes"
@@ -28,6 +28,7 @@ describe("VerdictBanner (smoke)", () => {
     );
     expect(screen.getByText("Request changes")).toBeInTheDocument();
     expect(screen.getByText("42")).toBeInTheDocument();
-    expect(screen.getByText(/1 findings · 1 blockers/)).toBeInTheDocument();
+    expect(screen.getByText("1 findings")).toBeInTheDocument();
+    expect(screen.queryByText(/blocker/)).not.toBeInTheDocument();
   });
 });

@@ -63,7 +63,7 @@ export async function reviewsForPull(
     .select()
     .from(t.reviews)
     .where(eq(t.reviews.prId, prId))
-    .orderBy(desc(t.reviews.createdAt));
+    .orderBy(desc(t.reviews.createdAt), desc(t.reviews.id)); // id breaks timestamp ties (HW1)
   if (reviews.length === 0) return [];
   const ids = reviews.map((r) => r.id);
   const findings = await db.select().from(t.findings).where(inArray(t.findings.reviewId, ids));

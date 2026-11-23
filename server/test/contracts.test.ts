@@ -197,6 +197,11 @@ describe('AI contracts parse fixtures', () => {
     expect(PrMeta.parse(pr).cost_usd).toBeUndefined();
     expect(PrMeta.parse({ ...pr, cost_usd: 0.014 }).cost_usd).toBe(0.014);
     expect(PrMeta.parse({ ...pr, cost_usd: 0.014, cost_estimated: true }).cost_estimated).toBe(true);
+    // HW1: findings_summary is optional (GitHub-built PrMeta) and integer counts when present.
+    expect(PrMeta.parse(pr).findings_summary).toBeUndefined();
+    expect(PrMeta.parse({ ...pr, findings_summary: { CRITICAL: 1, WARNING: 0, SUGGESTION: 2 } }).findings_summary)
+      .toEqual({ CRITICAL: 1, WARNING: 0, SUGGESTION: 2 });
+    expect(PrMeta.safeParse({ ...pr, findings_summary: { CRITICAL: 1 } }).success).toBe(false);
   });
 });
 

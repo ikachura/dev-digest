@@ -346,6 +346,128 @@ d('A2 reviews + agents (Testcontainers pg)', () => {
     await app.close();
   });
 
+  it('HW1: PR list findings_summary + score = latest review per agent, dismissed excluded', async () => {
+    const app = await appWith(REVIEW_FIXTURE);
+    const { repo, pr } = await setupRepoAndPr(pg.handle.db, workspaceId);
+    const SEC = '00000000-0000-4000-8000-0000000000a1';
+    const PERF = '00000000-0000-4000-8000-0000000000a2';
+
+    const addReview = async (agentId: string, createdAt: string, findings: { severity: string; dismissed?: boolean }[]) => {
+      const [rv] = await pg.handle.db
+        .insert(t.reviews)
+        .values({ workspaceId, prId: pr.id, agentId, kind: 'review', createdAt: new Date(createdAt) })
+        .returning();
+      if (findings.length > 0) {
+        await pg.handle.db.insert(t.findings).values(
+          findings.map((f, i) => ({
+            reviewId: rv!.id,
+            file: 'src/config.ts',
+            startLine: i + 1,
+            endLine: i + 1,
+            severity: f.severity,
+            category: 'security',
+            title: `${f.severity} ${i}`,
+            rationale: 'r',
+            confidence: 0.9,
+            dismissedAt: f.dismissed ? new Date() : null,
+          })),
+        );
+      }
+    };
+    // Security: an OLD run with 3 CRITICAL (must be ignored) and a NEW run with
+    // 1 CRITICAL + 1 WARNING + 1 dismissed WARNING. Performance: one run, 1 SUGGESTION.
+    await addReview(SEC, '2026-11-20T10:00:00Z', [{ severity: 'CRITICAL' }, { severity: 'CRITICAL' }, { severity: 'CRITICAL' }]);
+    await addReview(SEC, '2026-11-21T10:00:00Z', [
+      { severity: 'CRITICAL' },
+      { severity: 'WARNING' },
+      { severity: 'WARNING', dismissed: true },
+    ]);
+    await addReview(PERF, '2026-11-21T09:00:00Z', [{ severity: 'SUGGESTION' }]);
+
+    const list = (await app.inject({ method: 'GET', url: `/repos/${repo.id}/pulls` })).json();
+    const row = list.find((p: { id: string }) => p.id === pr.id);
+    expect(row.findings_summary).toEqual({ CRITICAL: 1, WARNING: 1, SUGGESTION: 1 });
+    // scoreFromFindings: 100 − 35 − 12 − 3 = 50 (same set as findings_summary).
+    expect(row.score).toBe(50);
+
+    await app.close();
+  });
+
+  it('HW1: aggregation edge cases — null agent, summary reviews, zero open findings, other workspace', async () => {
+    const app = await appWith(REVIEW_FIXTURE);
+    const { repo, pr } = await setupRepoAndPr(pg.handle.db, workspaceId);
+    const [otherWs] = await pg.handle.db.insert(t.workspaces).values({ name: 'other' }).returning();
+
+    const add = async (
+      values: { agentId: string | null; kind: 'review' | 'summary'; ws?: string; createdAt: string },
+      findings: { severity: string; dismissed?: boolean }[],
+    ) => {
+      const [rv] = await pg.handle.db
+        .insert(t.reviews)
+        .values({
+          workspaceId: values.ws ?? workspaceId,
+          prId: pr.id,
+          agentId: values.agentId,
+          kind: values.kind,
+          createdAt: new Date(values.createdAt),
+        })
+        .returning();
+      for (const [i, f] of findings.entries()) {
+        await pg.handle.db.insert(t.findings).values({
+          reviewId: rv!.id,
+          file: 'a.ts',
+          startLine: i + 1,
+          endLine: i + 1,
+          severity: f.severity,
+          category: 'bug',
+          title: `t${i}`,
+          rationale: 'r',
+          confidence: 0.9,
+          dismissedAt: f.dismissed ? new Date() : null,
+        });
+      }
+    };
+    // Two agent-less reviews: each counts on its own (both findings kept).
+    await add({ agentId: null, kind: 'review', createdAt: '2026-11-21T10:00:00Z' }, [{ severity: 'WARNING' }]);
+    await add({ agentId: null, kind: 'review', createdAt: '2026-11-21T11:00:00Z' }, [{ severity: 'SUGGESTION' }]);
+    // A summary review must be ignored.
+    await add({ agentId: null, kind: 'summary', createdAt: '2026-11-22T10:00:00Z' }, [{ severity: 'CRITICAL' }]);
+    // Another workspace's review on the same PR id must not leak in.
+    await add({ agentId: null, kind: 'review', ws: otherWs!.id, createdAt: '2026-11-22T11:00:00Z' }, [{ severity: 'CRITICAL' }]);
+
+    let list = (await app.inject({ method: 'GET', url: `/repos/${repo.id}/pulls` })).json();
+    let row = list.find((p: { id: string }) => p.id === pr.id);
+    expect(row.findings_summary).toEqual({ CRITICAL: 0, WARNING: 1, SUGGESTION: 1 });
+    expect(row.score).toBe(100 - 12 - 3);
+
+    // Reviewed PR whose only findings are dismissed → all-zero summary, score 100.
+    const { repo: repo2, pr: pr2 } = await setupRepoAndPr(pg.handle.db, workspaceId);
+    const [rv2] = await pg.handle.db
+      .insert(t.reviews)
+      .values({ workspaceId, prId: pr2.id, agentId: null, kind: 'review' })
+      .returning();
+    await pg.handle.db.insert(t.findings).values({
+      reviewId: rv2!.id, file: 'a.ts', startLine: 1, endLine: 1, severity: 'CRITICAL',
+      category: 'bug', title: 't', rationale: 'r', confidence: 0.9, dismissedAt: new Date(),
+    });
+    list = (await app.inject({ method: 'GET', url: `/repos/${repo2.id}/pulls` })).json();
+    row = list.find((p: { id: string }) => p.id === pr2.id);
+    expect(row.findings_summary).toEqual({ CRITICAL: 0, WARNING: 0, SUGGESTION: 0 });
+    expect(row.score).toBe(100);
+
+    await app.close();
+  });
+
+  it('HW1: a never-reviewed PR has no findings_summary and no score', async () => {
+    const app = await appWith(REVIEW_FIXTURE);
+    const { repo, pr } = await setupRepoAndPr(pg.handle.db, workspaceId);
+    const list = (await app.inject({ method: 'GET', url: `/repos/${repo.id}/pulls` })).json();
+    const row = list.find((p: { id: string }) => p.id === pr.id);
+    expect(row.findings_summary).toBeNull();
+    expect(row.score).toBeNull();
+    await app.close();
+  });
+
   it('dual-provider structured output: anthropic provider returns the same Review shape', async () => {
     const app = await appWith(REVIEW_FIXTURE, 'anthropic');
     const { pr } = await setupRepoAndPr(pg.handle.db, workspaceId);

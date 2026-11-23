@@ -10,6 +10,7 @@ import { Icon, Badge } from "@devdigest/ui";
 import type { ReviewRecord, Verdict } from "@devdigest/shared";
 import { FindingsPanel } from "../FindingsPanel";
 import { VerdictBanner } from "../VerdictBanner";
+import { activeFindings, countBySeverity, SeverityIcons, totalCount } from "@/components/findings";
 import { useDeleteReview } from "../../../../../../../lib/hooks/reviews";
 
 const VERDICT_COLOR: Record<string, string> = {
@@ -54,6 +55,7 @@ export function ReviewRunAccordion({
   const del = useDeleteReview(prId);
   const findings = review.findings;
   const blockers = findings.filter((f) => f.severity === "CRITICAL" && !f.dismissed_at).length;
+  const openCounts = React.useMemo(() => countBySeverity(activeFindings(findings)), [findings]);
   const verdictColor = review.verdict ? VERDICT_COLOR[review.verdict] ?? "var(--text-muted)" : "var(--text-muted)";
 
   return (
@@ -93,10 +95,15 @@ export function ReviewRunAccordion({
             {review.verdict.replace("_", " ")}
           </Badge>
         )}
-        <span style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
-          {findings.length} finding{findings.length === 1 ? "" : "s"}
-          {blockers > 0 ? ` · ${blockers} blocker${blockers === 1 ? "" : "s"}` : ""}
-        </span>
+        {/* Open findings per severity (same icons as Timeline / PR list) instead of
+            "N findings · M blockers" — the red CRITICAL count IS the blocker count. */}
+        {totalCount(openCounts) > 0 ? (
+          <SeverityIcons counts={openCounts} underline={false} />
+        ) : (
+          <span style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
+            {findings.length} finding{findings.length === 1 ? "" : "s"}
+          </span>
+        )}
         <span style={{ flex: 1 }} />
         {review.score != null && (
           <Badge mono color="var(--text-secondary)">

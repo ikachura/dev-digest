@@ -24,7 +24,7 @@ const SEVERITY_PENALTY: Record<Finding['severity'], number> = {
  * `to-review.ts`, so the number on screen can never contradict the findings
  * beneath it.
  */
-export function scoreFromFindings(findings: Finding[]): number {
+export function scoreFromFindings(findings: ReadonlyArray<Pick<Finding, 'severity'>>): number {
   const penalty = findings.reduce((sum, f) => sum + (SEVERITY_PENALTY[f.severity] ?? 0), 0);
   return Math.max(0, Math.min(100, 100 - penalty));
 }
